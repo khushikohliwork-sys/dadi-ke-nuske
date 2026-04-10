@@ -5,24 +5,24 @@ LOG_FILE = "chat_debug.txt"
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-# 🧹 Remove default handlers (important in Flask debug mode)
+
 if logger.hasHandlers():
     logger.handlers.clear()
 
-# 📁 File handler (writes to Notepad file)
+
 file_handler = logging.FileHandler(LOG_FILE, encoding="utf-8")
 file_handler.setLevel(logging.INFO)
 
-# 🖥 Console handler (optional)
+
 console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.INFO)
 
-# 🎨 Format
+
 formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
 file_handler.setFormatter(formatter)
 console_handler.setFormatter(formatter)
 
-# ➕ Add handlers
+
 logger.addHandler(file_handler)
 logger.addHandler(console_handler)
 logger = logging.getLogger(__name__)
@@ -681,7 +681,11 @@ def get_history():
         })
 
     return jsonify({"history": cleaned_history, "session_id": session_id})
-
+@app.route('/status', methods=['GET'])
+def status():
+    """Return API status."""
+    print("Status check requested")
+    return jsonify({"status": "OKAY"}), 200
 # ============================================================w
 if __name__ == "__main__":
     app.run(debug=True, port=5000)
