@@ -15,9 +15,15 @@
                 <p class="subtitle">Advanced dual-layer system for symptom discussion and triage</p>
             </div>
             <div class="header-actions">
-                <button onclick="toggleJsonPanel()" class="action-btn" title="Toggle JSON Panel">
+                <!-- <button onclick="toggleJsonPanel()" class="action-btn" title="Toggle JSON Panel">
                     <i class="fas fa-code"></i>
-                </button>
+                </button> -->
+
+                <div class="reset_btn">
+                    <button onclick="resetConversation()" class="end-chat-btn" title="End Chat">
+                        <i class="fas fa-trash-alt"></i> Clear Chat
+                    </button>
+                </div>
                 
              
                 
@@ -103,9 +109,9 @@ input:checked + .slider:before {
                 
                 <div class="input-area">
                         <div class="file-upload-btn">
-                            <label for="fileUpload" class="upload-label" title="Upload medical report">
+                            <!-- <label for="fileUpload" class="upload-label" title="Upload medical report">
                                 <i class="fas fa-paperclip"></i>
-                            </label>
+                            </label> -->
                             <input type="file" id="fileUpload" accept=".pdf,.jpg,.jpeg,.png,.gif,.doc,.docx" style="display: none;">
                         </div>
                         <textarea 
@@ -117,11 +123,9 @@ input:checked + .slider:before {
                             <i class="fas fa-paper-plane"></i>
                         </button>
 
-                        <!-- New End Chat Button -->
-                        <button onclick="resetConversation()" class="end-chat-btn" title="End Chat">
-                            <i class="fas fa-times-circle"></i>
-                        </button>
+                        
                     </div>
+
                 </div>
 
 <style>
@@ -130,16 +134,22 @@ input:checked + .slider:before {
     color: white;
     border: none;
     border-radius: 4px;
-    padding: 6px 10px;
+    padding: 6px 20px;
     margin-left: 8px;
     cursor: pointer;
     font-size: 16px;
+    font-weight: bold;
     transition: 0.2s;
+    width: auto !important;
+    border-radius: 50px;
 }
-
+.end-chat-btn i{
+    margin-right: 10px;
+}
 .end-chat-btn:hover {
     background-color: #c0392b; /* darker red on hover */
 }
+
 </style>
             <div id="jsonPanel" class="json-panel hidden">
                 <div class="json-header">

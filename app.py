@@ -1,5 +1,5 @@
 import logging
-
+import uuid
 LOG_FILE = "chat_debug.txt"
 
 logger = logging.getLogger(__name__)
