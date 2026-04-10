@@ -441,7 +441,7 @@ def chat():
     if not history:
         try:
             res = requests.get(
-                f"http://dadi.com/get_chat.php?session_id={session_id}",
+                f"https://biglive.com/API/dadi/get_chat.php?session_id={session_id}",
                 timeout=5
             )
             if res.status_code == 200:
@@ -625,7 +625,7 @@ Followup rounds: {followup_rounds}
     }
 
     try:
-        requests.post("http://dadi.com/insert_chat.php", data=payload, timeout=5)
+        requests.post("https://biglive.com/API/dadi/insert_chat.php", data=payload, timeout=5)
     except Exception as e:
         logger.error(f"DB failed: {e}")
 
@@ -654,7 +654,7 @@ def get_history():
 
     # Try to get full history from DB
     try:
-        res = requests.get(f"http://dadi.com/get_chat.php?session_id={session_id}", timeout=5)
+        res = requests.get(f"https://biglive.com/API/dadi/get_chat.php?session_id={session_id}", timeout=5)
         if res.status_code == 200:
             data = res.json()
             full_history = json.loads(data.get("history_json", "[]"))
