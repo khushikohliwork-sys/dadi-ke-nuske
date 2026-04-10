@@ -27,6 +27,7 @@ logger.addHandler(file_handler)
 logger.addHandler(console_handler)
 logger = logging.getLogger(__name__)
 from flask import Flask, request, jsonify, render_template, session
+from flask_cors import CORS
 from dotenv import load_dotenv
 import requests
 import re
@@ -51,6 +52,9 @@ load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "fallback_secret")
+CORS(app,
+     supports_credentials=True,
+     origins=["https://www.biglive.com"])
 
 # ============================================================
 # GROQ CONFIG
