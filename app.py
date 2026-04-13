@@ -54,7 +54,7 @@ app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "fallback_secret")
 CORS(app,
      supports_credentials=True,
-     origins=["http://biglive.in"])
+     origins=["https://www.biglive.com"])
 
 # ============================================================
 # GROQ CONFIG
@@ -644,7 +644,7 @@ def get_history():
 
     try:
         res = requests.get(
-            f"https://biglive.com/API/get_chat.php?session_id={session_id}",
+            f"https://biglive.com/API/dadi/get_chat.php?session_id={session_id}",
             timeout=5
         )
 
