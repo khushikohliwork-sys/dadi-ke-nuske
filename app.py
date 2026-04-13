@@ -423,15 +423,15 @@ import json
 def chat():
     import json, requests, re, random
 
-    data = request.get_json() or {}
+   data = request.get_json() or {}
 
     user_message = (data.get("message") or "").strip()
+    
     session_id = data.get("session_id") or session.get("session_id")
-
+    
     if not session_id:
         session_id = str(uuid.uuid4().hex[:16])
-        logger.info(f"Generated new session_id: {session_id}")
-
+    
     session["session_id"] = session_id
 
     if not session_id:
@@ -450,7 +450,8 @@ def chat():
     followup_rounds = session.get("followup_rounds", 0)
 
     # ================= RESTORE =================
-    if not history:
+    if not session.get("restored"):
+        session["restored"] = True
         try:
             res = requests.get(
                 f"https://biglive.com/API/dadi/get_chat.php?session_id={session_id}",
@@ -621,6 +622,7 @@ Followup rounds: {followup_rounds}
         logger.error(e)
 
     return jsonify({
+        "session_id": session_id,
         "final": reply,
         "diagnosis": parsed.get("diagnosis", ""),
         "cause": parsed.get("cause", ""),
