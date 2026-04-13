@@ -426,7 +426,13 @@ def chat():
     data = request.get_json() or {}
 
     user_message = (data.get("message") or "").strip()
-    session_id = data.get("session_id")
+    session_id = data.get("session_id") or session.get("session_id")
+
+    if not session_id:
+        session_id = str(uuid.uuid4().hex[:16])
+        logger.info(f"Generated new session_id: {session_id}")
+
+    session["session_id"] = session_id
 
     if not session_id:
         return jsonify({"error": "session_id missing"}), 400
