@@ -421,221 +421,208 @@ def index():
 import json
 @app.route("/chat", methods=["POST"])
 def chat():
-    import json, requests, uuid, re, random
+    import json, requests, re, random
 
-    data = request.get_json()
+    data = request.get_json() or {}
+
     user_message = (data.get("message") or "").strip()
+    session_id = data.get("session_id")
+
+    if not session_id:
+        return jsonify({"error": "session_id missing"}), 400
 
     if not user_message:
         return jsonify({"final": "Beta message nahi bheja"}), 400
 
-    # ================= SESSION INIT =================
+    # ================= PATTERNS =================
+    EXIT_PATTERN = re.compile(r'\b(thank|thanks|bye|goodbye|ok|okay|theek hai|thik hai)\b', re.IGNORECASE)
+
+    # ================= SESSION =================
     profile = session.get("profile", {})
     history = session.get("history", [])
     full_history = session.get("full_history", [])
     followup_rounds = session.get("followup_rounds", 0)
-    last_advice_given = session.get("last_advice_given", True)
 
-    # ================= SESSION ID =================
-    if "session_id" not in session:
-        session["session_id"] = request.cookies.get("chat_id") or uuid.uuid4().hex[:16]
-    session_id = session["session_id"]
-
-    # ================= RESTORE SESSION FROM DB =================
+    # ================= RESTORE =================
     if not history:
         try:
             res = requests.get(
                 f"https://biglive.com/API/dadi/get_chat.php?session_id={session_id}",
                 timeout=5
             )
-            if res.status_code == 200:
-                data = res.json()
 
-                session["profile"] = {
-                    "age": data.get("age"),
-                    "sex": data.get("sex"),
-                    "problem": data.get("problem")
+            if res.status_code == 200:
+                db = res.json()
+
+                profile = {
+                    "age": db.get("age"),
+                    "sex": db.get("sex"),
+                    "problem": db.get("problem")
                 }
 
-                restored = json.loads(data.get("history_json", "[]"))
-                session["full_history"] = restored
-                session["history"] = restored[-6:]
+                restored = json.loads(db.get("history_json", "[]"))
 
-                session["followup_rounds"] = data.get("followup_rounds", 0)
-                session["last_advice_given"] = True
-
-                profile = session.get("profile", {})
-                history = session.get("history", [])
-                full_history = session.get("full_history", [])
-                followup_rounds = session.get("followup_rounds", 0)
+                history = restored[-10:]
+                full_history = restored
+                followup_rounds = db.get("followup_rounds", 0)
 
         except Exception as e:
-            logger.error(f"Restore failed: {e}")
+            logger.error(f"restore failed: {e}")
 
-    # ================= PROFILE EXTRACTION =================
+    # ================= PROFILE =================
     new_data = extract_user_profile(user_message)
-    for key in ["age", "sex"]:
-        if new_data.get(key):
-            profile[key] = new_data[key]
-
+    profile.update({k: v for k, v in new_data.items() if v})
     session["profile"] = profile
-    if re.search(r'umar kya hai|meri age kya hai', user_message, re.IGNORECASE):
-        if profile.get("age"):
-            return jsonify({"final": f"Beta, tumhari umar {profile['age']} saal hai"})
-        else:
-            return jsonify({"final": "Beta, tumne abhi tak apni umar batayi nahi"})
-    # ================= CLASSIFICATION =================
+
+    # ================= CLASSIFY =================
     classification = classifier.classify(user_message)
     is_medical = classification in ["medical", "emergency"]
 
-    remedy_keywords = re.compile(
-        r'\b(nuska|remedy|detail|batana|thoda|aur|elaborate|explain|more)\b',
-        re.IGNORECASE
-    )
-
-    if (followup_rounds > 0 or not last_advice_given) and remedy_keywords.search(user_message):
+    if followup_rounds > 0:
         is_medical = True
 
-    # ================= NON-MEDICAL =================
-    if not is_medical:
-        if FAREWELL_PATTERN.search(user_message):
-            reply = random.choice(STATIC_FAREWELL)
-        elif THANKS_PATTERN.search(user_message) and last_advice_given:
-            reply = random.choice(STATIC_THANKS)
-            session["last_advice_given"] = False
-        elif GREETING_PATTERN.search(user_message):
-            reply = random.choice(STATIC_GREETINGS)
-        else:
-            short_context = [{"role": m["role"], "content": m["content"][:100]} for m in history[-4:]]
-            messages = [
-                {"role": "system", "content": CASUAL_SYSTEM_PROMPT},
-                *short_context,
-                {"role": "user", "content": user_message}
-            ]
-
-            try:
-                result = call_groq_api(messages, temperature=0.7, max_tokens=50)
-                reply = result["choices"][0]["message"]["content"].strip()
-            except Exception as e:
-                logger.error(f"Casual AI failed: {e}")
-                reply = random.choice(STATIC_GREETINGS)
-
-        history.append({"role": "user", "content": user_message})
-        full_history.append({"role": "user", "content": user_message})
-
-        if not reply or not reply.strip():
-            reply = "Thoda aur batao beta"
-
-        history.append({"role": "assistant", "content": reply})
-        full_history.append({"role": "assistant", "content": reply})
-
-        session["history"] = history[-6:]
-        session["full_history"] = full_history[-50:]
-
-        return jsonify({"final": reply})
-
-    # ================= MEDICAL FLOW =================
-    if not profile.get("problem"):
-        profile["problem"] = user_message.lower()
-
-    session["profile"] = profile
-
+    # ================= ADD MESSAGE =================
     history.append({"role": "user", "content": user_message})
     full_history.append({"role": "user", "content": user_message})
 
-    context_history = [{"role": m["role"], "content": m["content"][:200]} for m in history[-4:]]
+    reply = ""
+    assistant_content = ""
+    parsed = {}
 
-    messages = [
-        {"role": "system", "content": DADI_SYSTEM_PROMPT},
-        {"role": "system", "content": f"""
-Age: {profile.get('age', 'Unknown')}
-Sex: {profile.get('sex', 'Unknown')}
-Problem: {profile.get('problem', '')}
+    # =====================================================
+    # 1. EXIT FLOW
+    # =====================================================
+    if EXIT_PATTERN.search(user_message):
+        reply = random.choice(STATIC_THANKS + STATIC_FAREWELL)
+
+    # =====================================================
+    # 2. GREETING FLOW
+    # =====================================================
+    elif GREETING_PATTERN.search(user_message):
+        reply = random.choice(STATIC_GREETINGS)
+
+    # =====================================================
+    # 3. INQUIRY FLOW (🔥 YOUR FIX)
+    # =====================================================
+    elif INQUIRY_PATTERN.search(user_message):
+        reply = random.choice(STATIC_INQUIRY_RESPONSES)
+
+    # =====================================================
+    # 4. THANKS FLOW
+    # =====================================================
+    elif THANKS_PATTERN.search(user_message):
+        reply = random.choice(STATIC_THANKS)
+    elif FAREWELL_PATTERN.search(user_message):
+         reply = random.choice(STATIC_FAREWELL)
+
+    # =====================================================
+    # 5. MEDICAL FLOW
+    # =====================================================
+    elif is_medical:
+
+        if not profile.get("problem"):
+            profile["problem"] = user_message.lower()
+
+        session["profile"] = profile
+
+        context = [
+            {"role": m["role"], "content": m["content"][:300]}
+            for m in history[-10:]
+        ]
+
+        messages = [
+            {"role": "system", "content": DADI_SYSTEM_PROMPT},
+            {"role": "system", "content": f"""
+Age: {profile.get('age')}
+Sex: {profile.get('sex')}
+Problem: {profile.get('problem')}
 Followup rounds: {followup_rounds}
 """}
-    ] + context_history
+        ] + context
 
-    try:
-        result = call_groq_api(messages)
-        raw = result["choices"][0]["message"]["content"]
-    except Exception as e:
-        logger.error(f"AI API failed: {e}")
-        return jsonify({"final": "System busy hai beta, baad mein try karo"})
+        try:
+            result = call_groq_api(messages)
+            raw = result["choices"][0]["message"]["content"]
 
-    cleaned = remove_thinking(raw).strip()
-    cleaned = clean_language(cleaned)
+            cleaned = clean_language(remove_thinking(raw).strip())
+            parsed = parse_xml_response(cleaned)
 
-    if "</response>" in cleaned:
-        cleaned = cleaned.split("</response>")[0] + "</response>"
+            assistant_content = cleaned
 
-    parsed = parse_xml_response(cleaned)
+            if (
+                parsed.get("followup_questions")
+                and parsed["followup_questions"].strip()
+                and followup_rounds < 3
+            ):
+                reply = format_followup_questions(parsed["followup_questions"])
+                followup_rounds += 1
+            else:
+                reply = (
+                    (parsed.get("final") or "") +
+                    "\n" +
+                    (parsed.get("remedy") or "")
+                ).strip()
 
-    # ================= BUILD FULL RESPONSE =================
-    full_reply = ""
+            if not reply.strip():
+                reply = "Beta, mujhe thoda aur detail batao 😊"
 
-    if parsed.get("final"):
-        full_reply += parsed["final"] + "\n"
+        except Exception as e:
+            logger.error(e)
+            reply = "System busy hai beta, baad mein try karo"
 
-    if parsed.get("diet"):
-        full_reply += "\nDiet:\n" + parsed["diet"]
-
-    if parsed.get("habit"):
-        full_reply += "\nHabit:\n" + parsed["habit"]
-
-    full_reply = full_reply.strip()
-
-    # ================= FOLLOW-UP =================
-   # ================= BUILD FULL RESPONSE =================
-# Cleaned XML response from Dadi AI
-    assistant_content = cleaned  # includes <followup_questions> etc.
-
-# Decide what to show to user (frontend)
-    MAX_FOLLOWUP = 3
-    if parsed.get("followup_questions") and followup_rounds < MAX_FOLLOWUP:
-        # Show only formatted follow-up questions to user
-        reply = format_followup_questions(parsed["followup_questions"])
-        followup_rounds += 1
+    # =====================================================
+    # 6. CASUAL AI FLOW
+    # =====================================================
     else:
-        # Show full remedy/diet/habit/etc
-        reply = (
-            (parsed.get("final") or "") + "\n"
-            + ("\nDiet:\n" + parsed.get("diet", "") if parsed.get("diet") else "")
-            + ("\nHabit:\n" + parsed.get("habit", "") if parsed.get("habit") else "")
-        ).strip()
+        try:
+            messages = [
+                {"role": "system", "content": CASUAL_SYSTEM_PROMPT},
+                *history[-4:],
+                {"role": "user", "content": user_message}
+            ]
 
-    if not reply or not reply.strip():
-        reply = "Thoda aur batao beta"
+            result = call_groq_api(messages, temperature=0.7, max_tokens=80)
+            reply = result["choices"][0]["message"]["content"].strip()
 
-    # ================= APPEND TO SESSION =================
-    # What user sees
+        except Exception as e:
+            logger.error(e)
+            reply = random.choice(STATIC_GREETINGS)
+
+        assistant_content = reply
+        parsed = {"final": reply}
+
+    # ================= SAVE HISTORY =================
     history.append({"role": "assistant", "content": reply})
+    full_history.append({"role": "assistant", "content": assistant_content or reply})
 
-    # What we store in DB / full history (includes full XML)
-    full_history.append({"role": "assistant", "content": assistant_content})
-
-    session["history"] = history[-6:]
+    session["history"] = history[-10:]
     session["full_history"] = full_history[-50:]
     session["followup_rounds"] = followup_rounds
 
-    # ================= SAVE TO DB =================
+    # ================= SAVE DB =================
     payload = {
         "session_id": session_id,
         "age": profile.get("age"),
-        "sex": profile.get("sex") or "Unknown",
+        "sex": profile.get("sex"),
         "problem": profile.get("problem", ""),
         "followup_rounds": followup_rounds,
-        "status": "active",
         "history_json": json.dumps(full_history, ensure_ascii=False)
     }
 
     try:
         requests.post("https://biglive.com/API/dadi/insert_chat.php", data=payload, timeout=5)
     except Exception as e:
-        logger.error(f"DB failed: {e}")
+        logger.error(e)
 
-    parsed["final"] = reply
-    return jsonify(parsed)
-
+    return jsonify({
+        "final": reply,
+        "diagnosis": parsed.get("diagnosis", ""),
+        "cause": parsed.get("cause", ""),
+        "remedy": parsed.get("remedy", ""),
+        "diet": parsed.get("diet", ""),
+        "habit": parsed.get("habit", ""),
+        "followup_questions": parsed.get("followup_questions", "")
+    })
 @app.route("/reset", methods=["POST"])
 def reset():
     session.clear()
@@ -646,45 +633,46 @@ def reset():
 
 @app.route("/get_history", methods=["GET"])
 def get_history():
-    """Return full chat history for frontend rendering with XML preserved"""
-    session_id = session.get("session_id")
+    session_id = request.args.get("session_id", "").strip()
 
-    # 🔹 Hard reload / new session: no session_id yet
-    if not session_id:
-        import uuid
-        session["session_id"] = uuid.uuid4().hex[:16]
-        session_id = session["session_id"]
-        return jsonify({"history": [], "session_id": session_id})
+    if not session_id or session_id == "undefined":
+        return jsonify({
+            "history": [],
+            "session_id": None,
+            "error": "missing session_id"
+        }), 400
 
-    # Try to get full history from DB
     try:
-        res = requests.get(f"https://biglive.com/API/dadi/get_chat.php?session_id={session_id}", timeout=5)
-        if res.status_code == 200:
-            data = res.json()
-            full_history = json.loads(data.get("history_json", "[]"))
+        res = requests.get(
+            f"https://biglive.com/API/get_chat.php?session_id={session_id}",
+            timeout=5
+        )
 
-            # 🔹 Keep XML intact for assistant messages
-            cleaned_history = []
-            for msg in full_history:
-                cleaned_history.append({
+        if res.status_code == 200:
+            db_data = res.json()
+
+            full_history = json.loads(db_data.get("history_json", "[]"))
+
+            cleaned_history = [
+                {
                     "role": msg.get("role"),
                     "content": msg.get("content", "")
-                })
+                }
+                for msg in full_history
+            ]
 
-            return jsonify({"history": cleaned_history, "session_id": session_id})
+            return jsonify({
+                "history": cleaned_history,
+                "session_id": session_id
+            })
+
     except Exception as e:
-        logger.error(f"Failed to fetch full history from DB: {e}")
+        logger.error(f"get_history failed: {e}")
 
-    # fallback to session if DB fails
-    history = session.get("history", [])
-    cleaned_history = []
-    for msg in history:
-        cleaned_history.append({
-            "role": msg.get("role"),
-            "content": msg.get("content", "")
-        })
-
-    return jsonify({"history": cleaned_history, "session_id": session_id})
+    return jsonify({
+        "history": [],
+        "session_id": session_id
+    })
 @app.route('/status', methods=['GET'])
 def status():
     """Return API status."""
@@ -692,4 +680,4 @@ def status():
     return jsonify({"status": "OKAY"}), 200
 # ============================================================w
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    app.run(host="0.0.0.0", port=5000, debug=True)
