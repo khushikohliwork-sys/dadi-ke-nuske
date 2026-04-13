@@ -426,16 +426,16 @@ def chat():
     data = request.get_json() or {}
 
     user_message = (data.get("message") or "").strip()
-    
+
+    # =====================================================
+    # ✅ SESSION ID FIX (CLEAN + SAFE)
+    # =====================================================
     session_id = data.get("session_id") or session.get("session_id")
-    
-    if not session_id:
-        session_id = str(uuid.uuid4().hex[:16])
-    
-    session["session_id"] = session_id
 
     if not session_id:
-        return jsonify({"error": "session_id missing"}), 400
+        session_id = str(uuid.uuid4().hex[:16])
+
+    session["session_id"] = session_id
 
     if not user_message:
         return jsonify({"final": "Beta message nahi bheja"}), 400
@@ -449,9 +449,8 @@ def chat():
     full_history = session.get("full_history", [])
     followup_rounds = session.get("followup_rounds", 0)
 
-    # ================= RESTORE =================
+    # ================= RESTORE (FIXED) =================
     if not session.get("restored"):
-        session["restored"] = True
         try:
             res = requests.get(
                 f"https://biglive.com/API/dadi/get_chat.php?session_id={session_id}",
@@ -476,6 +475,8 @@ def chat():
         except Exception as e:
             logger.error(f"restore failed: {e}")
 
+        session["restored"] = True
+
     # ================= PROFILE =================
     new_data = extract_user_profile(user_message)
     profile.update({k: v for k, v in new_data.items() if v})
@@ -493,7 +494,6 @@ def chat():
     full_history.append({"role": "user", "content": user_message})
 
     reply = ""
-    assistant_content = ""
     parsed = {}
 
     # =====================================================
@@ -509,18 +509,19 @@ def chat():
         reply = random.choice(STATIC_GREETINGS)
 
     # =====================================================
-    # 3. INQUIRY FLOW (🔥 YOUR FIX)
+    # 3. INQUIRY FLOW
     # =====================================================
     elif INQUIRY_PATTERN.search(user_message):
         reply = random.choice(STATIC_INQUIRY_RESPONSES)
 
     # =====================================================
-    # 4. THANKS FLOW
+    # 4. THANKS / FAREWELL
     # =====================================================
     elif THANKS_PATTERN.search(user_message):
         reply = random.choice(STATIC_THANKS)
+
     elif FAREWELL_PATTERN.search(user_message):
-         reply = random.choice(STATIC_FAREWELL)
+        reply = random.choice(STATIC_FAREWELL)
 
     # =====================================================
     # 5. MEDICAL FLOW
@@ -554,14 +555,11 @@ Followup rounds: {followup_rounds}
             cleaned = clean_language(remove_thinking(raw).strip())
             parsed = parse_xml_response(cleaned)
 
-            assistant_content = cleaned
+            # ================= FOLLOWUP LOGIC =================
+            followups = parsed.get("followup_questions", "").strip()
 
-            if (
-                parsed.get("followup_questions")
-                and parsed["followup_questions"].strip()
-                and followup_rounds < 3
-            ):
-                reply = format_followup_questions(parsed["followup_questions"])
+            if followups and followup_rounds < 2:
+                reply = format_followup_questions(followups)
                 followup_rounds += 1
             else:
                 reply = (
@@ -578,7 +576,7 @@ Followup rounds: {followup_rounds}
             reply = "System busy hai beta, baad mein try karo"
 
     # =====================================================
-    # 6. CASUAL AI FLOW
+    # 6. CASUAL FLOW
     # =====================================================
     else:
         try:
@@ -595,12 +593,11 @@ Followup rounds: {followup_rounds}
             logger.error(e)
             reply = random.choice(STATIC_GREETINGS)
 
-        assistant_content = reply
         parsed = {"final": reply}
 
     # ================= SAVE HISTORY =================
     history.append({"role": "assistant", "content": reply})
-    full_history.append({"role": "assistant", "content": assistant_content or reply})
+    full_history.append({"role": "assistant", "content": reply})
 
     session["history"] = history[-10:]
     session["full_history"] = full_history[-50:]
@@ -617,7 +614,11 @@ Followup rounds: {followup_rounds}
     }
 
     try:
-        requests.post("https://biglive.com/API/dadi/insert_chat.php", data=payload, timeout=5)
+        requests.post(
+            "https://biglive.com/API/dadi/insert_chat.php",
+            data=payload,
+            timeout=5
+        )
     except Exception as e:
         logger.error(e)
 
