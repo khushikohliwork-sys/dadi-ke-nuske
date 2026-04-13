@@ -423,7 +423,7 @@ import json
 def chat():
     import json, requests, re, random
 
-   data = request.get_json() or {}
+    data = request.get_json() or {}
 
     user_message = (data.get("message") or "").strip()
     
