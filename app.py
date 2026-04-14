@@ -1,30 +1,11 @@
 import logging
 import uuid
-LOG_FILE = "chat_debug.txt"
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,  # INFO shows general events; DEBUG shows everything
+    format="%(asctime)s [%(levelname)s] %(message)s",
+)
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-
-
-if logger.hasHandlers():
-    logger.handlers.clear()
-
-
-file_handler = logging.FileHandler(LOG_FILE, encoding="utf-8")
-file_handler.setLevel(logging.INFO)
-
-
-console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.INFO)
-
-
-formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
-file_handler.setFormatter(formatter)
-console_handler.setFormatter(formatter)
-
-
-logger.addHandler(file_handler)
-logger.addHandler(console_handler)
 logger = logging.getLogger(__name__)
 from flask import Flask, request, jsonify, render_template, session
 from flask_cors import CORS
@@ -55,7 +36,6 @@ app.secret_key = os.getenv("SECRET_KEY", "fallback_secret")
 CORS(app,
      supports_credentials=True,
      origins=["https://www.biglive.com"])
-
 # ============================================================
 # GROQ CONFIG
 # ============================================================
@@ -137,6 +117,7 @@ def call_groq_api(messages, temperature=0.8, max_tokens=600, retries=3, block_ti
     # ===== All retries exhausted =====
     logger.error("Max retries exceeded, system busy 😅")
     raise Exception("Max retries exceeded, system busy 😅")
+
 API_KEYS = [
     os.getenv("GROQ_API_KEY_1"),
     os.getenv("GROQ_API_KEY_2"),
@@ -145,7 +126,6 @@ API_KEYS = [
     os.getenv("GROQ_API_KEY_5"),
     os.getenv("GROQ_API_KEY_6"),
     os.getenv("GROQ_API_KEY_7"),
-
 ]
 
 API_KEYS = [k for k in API_KEYS if k]
@@ -180,10 +160,6 @@ classifier = MedicalClassifier(
     model=GROQ_MODEL,
     api_caller=call_groq_api  
 )
-# ============================================================
-# RETRY LOGIC (FIXES 429)
-# ============================================================
-
 
 # ============================================================
 # DADI PROMPT (UNCHANGED)
@@ -289,6 +265,7 @@ Minor optional info (urine color, mild headache, dryness) does NOT block remedy.
 
 IMPORTANT: Be specific and relevant. Talk like a real grandmother would — caring, practical, to the point.
 """
+
 # ============================================================
 # CLEAN RESPONSE
 # ============================================================
@@ -297,12 +274,10 @@ def remove_thinking(text):
 
     
 def clean_language(text):
-            # Keep English + Hindi + basic punctuation
+    # Keep English + Hindi + basic punctuation
     cleaned = re.sub(r'[^\x00-\x7F\u0900-\u097F\s.,!?\'"-]', '', text)
-            
-            # Remove extra spaces
+    # Remove extra spaces
     cleaned = re.sub(r'\s+', ' ', cleaned).strip()
-            
     return cleaned
 
 # ============================================================
@@ -325,7 +300,7 @@ def parse_xml_response(raw_text):
 
 
 # ============================================================
-# PROFILE EXTRACTION
+# PROFILE EXTRACTION (ENHANCED)
 # ============================================================
 
 def extract_user_profile(message: str) -> dict:
@@ -341,7 +316,6 @@ def extract_user_profile(message: str) -> dict:
         msg
     )
 
-
     if age_match:
         age = int(age_match.group(1))
         if 1 <= age <= 120:
@@ -355,22 +329,88 @@ def extract_user_profile(message: str) -> dict:
 
     return profile
 
+# ============================================================
+# MEDICAL FACTS EXTRACTION (NEW)
+# ============================================================
+
+def extract_medical_facts(message: str, current_memory: dict) -> dict:
+    """Extract temperature, duration, symptoms from user message"""
+    msg = message.lower()
+    updated = {}
+    
+    # Extract temperature
+    temp_patterns = [
+        r'(\d{2,3})\s*(?:°|degree|degrees?)\s*(?:f|fahrenheit)?',
+        r'fever\s*(\d{2,3})',
+        r'temp(?:erature)?\s*(?:is|was|hai|tha)?\s*(\d{2,3})',
+        r'(\d{2,3})\s*(?:°|degree|degrees?)'
+    ]
+    for pattern in temp_patterns:
+        temp_match = re.search(pattern, msg)
+        if temp_match:
+            updated['temperature'] = temp_match.group(1)
+            break
+    
+    # Extract duration
+    duration_patterns = [
+        r'(\d+)\s*(din|days?|day)',
+        r'(\d+)\s*(hours?|hrs?|ghante)',
+        r'(\d+)\s*(weeks?|week|hafta)',
+        r'(\d+)\s*(mahine|months?)'
+    ]
+    for pattern in duration_patterns:
+        duration_match = re.search(pattern, msg)
+        if duration_match:
+            unit = duration_match.group(2)
+            if 'hour' in unit or 'ghante' in unit:
+                unit_display = "hours"
+            elif 'din' in unit or 'day' in unit:
+                unit_display = "days"
+            elif 'week' in unit or 'hafta' in unit:
+                unit_display = "weeks"
+            elif 'mahine' in unit or 'month' in unit:
+                unit_display = "months"
+            else:
+                unit_display = "days"
+            updated['duration'] = f"{duration_match.group(1)} {unit_display}"
+            break
+    
+    # Extract symptoms (append to list)
+    symptoms_list = current_memory.get('symptoms', [])
+    symptom_keywords = {
+        'fever': ['fever', 'bukhar', 'temperature', 'tapish'],
+        'cough': ['cough', 'khansi'],
+        'cold': ['cold', 'zukam', 'sardi'],
+        'headache': ['headache', 'sir dard', 'dard in head'],
+        'bodyache': ['bodyache', 'body pain', 'badan dard', 'body ache'],
+        'nausea': ['nausea', 'nausious', 'matli', 'ultas', 'vomiting', 'ulti'],
+        'diarrhea': ['diarrhea', 'loose motion', 'dast'],
+        'sorethroat': ['sore throat', 'throat pain', 'gale mein dard'],
+        'weakness': ['weakness', 'kamzori', 'thakaan']
+    }
+    
+    for symptom, keywords in symptom_keywords.items():
+        for kw in keywords:
+            if kw in msg:
+                if symptom not in symptoms_list:
+                    symptoms_list.append(symptom)
+                updated['symptoms'] = symptoms_list
+                break
+    
+    return updated
+
 def format_followup_questions(qs):
     lines = qs.split("\n")
-
     clean = []
     for line in lines:
         line = line.strip()
-
-        # remove empty
         if not line:
             continue
-
-        # keep only numbered questions
-        if re.match(r"^\d+\.", line):
+        # keep numbered questions and bullet points
+        if re.match(r"^(\d+\.|\*)", line):
             clean.append(line)
-
     return "\n".join(clean)
+
 # ============================================================
 # STATIC RESPONSES & PATTERNS
 # ============================================================
@@ -400,7 +440,6 @@ STATIC_THANKS = [
 STATIC_FAREWELL = [
     "Accha beta, khayal rakhna. Phir milenge.",
     "Dadi ki dua hai saath mein. Theek rehna.",
-   
 ]
 
 # Minimal system prompt for casual chats (short to save tokens)
@@ -415,234 +454,285 @@ CASUAL_SYSTEM_PROMPT = (
 # ============================================================
 @app.route("/")
 def index():
-    # Do NOT clear session on every page load
-    # Only render the page
     return render_template("index.html")
+
 import json
 @app.route("/chat", methods=["POST"])
 def chat():
-    import json, requests, re, random
-    data = request.get_json() or {}
+    import json, requests, uuid, re, random
 
+    data = request.get_json()
     user_message = (data.get("message") or "").strip()
-    session_id = data.get("session_id")
-
-    if not session_id:
-        session_id = str(uuid.uuid4().hex[:16])
-
-    session["session_id"] = session_id
 
     if not user_message:
         return jsonify({"final": "Beta message nahi bheja"}), 400
 
-    # ================= PATTERNS =================
-    EXIT_PATTERN = re.compile(r'\b(thank|thanks|bye|goodbye|ok|okay|theek hai|thik hai)\b', re.IGNORECASE)
-
-    # ================= SESSION =================
+    # ================= SESSION INIT =================
     profile = session.get("profile", {})
     history = session.get("history", [])
     full_history = session.get("full_history", [])
     followup_rounds = session.get("followup_rounds", 0)
+    last_advice_given = session.get("last_advice_given", True)
+    medical_memory = session.get("medical_memory", {})
+    conversation_state = session.get("conversation_state", {"mode": "casual", "last_topic": None})
 
-    # ================= RESTORE =================
-    if not session.get("restored"):
-        session["restored"] = True
+    # ================= SESSION ID =================
+    incoming_session = data.get("session_id")
+    if incoming_session:
+        session["session_id"] = incoming_session
+    elif "session_id" not in session:
+        session["session_id"] = uuid.uuid4().hex[:16]
+    session_id = session.get("session_id")
+    
+    # ================= RESTORE SESSION FROM DB =================
+    if not history:
         try:
             res = requests.get(
                 f"https://biglive.com/API/dadi/get_chat.php?session_id={session_id}",
                 timeout=5
             )
-
             if res.status_code == 200:
-                db = res.json()
-
-                profile = {
-                    "age": db.get("age"),
-                    "sex": db.get("sex"),
-                    "problem": db.get("problem")
+                db_data = res.json()
+                session["profile"] = {
+                    "age": db_data.get("age"),
+                    "sex": db_data.get("sex"),
+                    "problem": db_data.get("problem")
                 }
-
-                restored = json.loads(db.get("history_json", "[]"))
-
-                history = restored[-10:]
-                full_history = restored
-                followup_rounds = db.get("followup_rounds", 0)
-
+                restored = json.loads(db_data.get("history_json", "[]"))
+                session["full_history"] = restored
+                session["history"] = restored[-12:]  # Increased from -6 to -12
+                session["followup_rounds"] = db_data.get("followup_rounds", 0)
+                session["last_advice_given"] = True
+                
+                # Restore medical memory
+                try:
+                    restored_memory = json.loads(db_data.get("medical_memory", "{}"))
+                    session["medical_memory"] = restored_memory
+                    medical_memory = restored_memory
+                except:
+                    session["medical_memory"] = {}
+                    medical_memory = {}
+                
+                profile = session.get("profile", {})
+                history = session.get("history", [])
+                full_history = session.get("full_history", [])
+                followup_rounds = session.get("followup_rounds", 0)
         except Exception as e:
-            logger.error(f"restore failed: {e}")
+            logger.error(f"Restore failed: {e}")
 
-    # ================= PROFILE =================
+    # ================= PROFILE EXTRACTION =================
     new_data = extract_user_profile(user_message)
-    profile.update({k: v for k, v in new_data.items() if v})
+    for key in ["age", "sex"]:
+        if new_data.get(key):
+            profile[key] = new_data[key]
     session["profile"] = profile
-    if re.search(r'\b(meri|my)?\s*(age|umar)\s*(kya|kitni)\b', user_message, re.IGNORECASE):
+
+    # ================= MEDICAL MEMORY EXTRACTION (FIX #2) =================
+    extracted_facts = extract_medical_facts(user_message, medical_memory)
+    for key, value in extracted_facts.items():
+        if key == 'symptoms':
+            medical_memory['symptoms'] = value
+        else:
+            medical_memory[key] = value
+    session["medical_memory"] = medical_memory
+
+    # ================= HANDLE QUERIES ABOUT PAST INFO (FIX #7) =================
+    # Age query
+    if re.search(r'umar kya hai|meri age kya hai|kitne saal', user_message, re.IGNORECASE):
         if profile.get("age"):
-            reply = f"Beta, tumhari umar {profile['age']} saal hai "
+            return jsonify({"final": f"Beta, tumhari umar {profile['age']} saal hai", "session_id": session_id})
         else:
-            reply = "Beta, tumne abhi tak apni umar batayi nahi"
-
-        return jsonify({"session_id": session_id, "final": reply})
-
-    # PROBLEM QUESTION
-    if re.search(r'\b(meri|my)?\s*(problem|bimari|issue)\s*(kya|kya hai)\b', user_message, re.IGNORECASE):
-        if profile.get("problem"):
-            reply = f"Beta, tumhari problem hai: {profile['problem']} "
+            return jsonify({"final": "Beta, tumne abhi tak apni umar batayi nahi", "session_id": session_id})
+    
+    # Temperature query
+    if re.search(r'(temperature|temp|fever) (kya tha|kya hai|kitna tha|kitna hai)', user_message, re.IGNORECASE):
+        temp = medical_memory.get("temperature")
+        if temp:
+            return jsonify({"final": f"Beta, tumhara temperature {temp}°F tha", "session_id": session_id})
         else:
-            reply = "Beta, tumne abhi tak apni problem clearly nahi batayi"
+            return jsonify({"final": "Beta, tumne abhi tak temperature bataya nahi. Kitna fever tha?", "session_id": session_id})
+    
+    # Duration query
+    if re.search(r'(kitne din|duration|kab se|days? se)', user_message, re.IGNORECASE):
+        duration = medical_memory.get("duration")
+        if duration:
+            return jsonify({"final": f"Beta, tumne bataya tha {duration} se problem hai", "session_id": session_id})
+        else:
+            return jsonify({"final": "Beta, tumne abhi tak bataya nahi ki kitne din se problem hai", "session_id": session_id})
 
-        return jsonify({"session_id": session_id, "final": reply})
-
-
-    # ================= CLASSIFY =================
+    # ================= CLASSIFICATION =================
     classification = classifier.classify(user_message)
     is_medical = classification in ["medical", "emergency"]
 
-    if followup_rounds > 0:
+    remedy_keywords = re.compile(
+        r'\b(nuska|remedy|detail|batana|thoda|aur|elaborate|explain|more|kya|solution)\b',
+        re.IGNORECASE
+    )
+
+    if (followup_rounds > 0 or not last_advice_given) and remedy_keywords.search(user_message):
         is_medical = True
 
-    # ================= ADD MESSAGE =================
+    # ================= CONVERSATION STATE (FIX #6) =================
+    if is_medical:
+        conversation_state["mode"] = "medical"
+        conversation_state["last_topic"] = "health"
+    elif not is_medical and followup_rounds == 0:
+        conversation_state["mode"] = "casual"
+    session["conversation_state"] = conversation_state
+
+    # ================= NON-MEDICAL =================
+    if not is_medical:
+        if FAREWELL_PATTERN.search(user_message):
+            reply = random.choice(STATIC_FAREWELL)
+        elif THANKS_PATTERN.search(user_message) and last_advice_given:
+            reply = random.choice(STATIC_THANKS)
+            session["last_advice_given"] = False
+        elif GREETING_PATTERN.search(user_message):
+            reply = random.choice(STATIC_GREETINGS)
+        else:
+            short_context = [{"role": m["role"], "content": m["content"][:100]} for m in history[-4:]]
+            messages = [
+                {"role": "system", "content": CASUAL_SYSTEM_PROMPT},
+                *short_context,
+                {"role": "user", "content": user_message}
+            ]
+            try:
+                print("Step 1", messages)
+                result = call_groq_api(messages, temperature=0.7, max_tokens=50)
+                reply = result["choices"][0]["message"]["content"].strip()
+            except Exception as e:
+                logger.error(f"Casual AI failed: {e}")
+                reply = random.choice(STATIC_GREETINGS)
+
+        history.append({"role": "user", "content": user_message})
+        full_history.append({"role": "user", "content": user_message})
+
+        if not reply or not reply.strip():
+            reply = "Thoda aur batao beta"
+
+        history.append({"role": "assistant", "content": reply})
+        full_history.append({"role": "assistant", "content": reply})
+
+        session["history"] = history[-12:]  # Increased from -6 to -12
+        session["full_history"] = full_history[-50:]
+
+        return jsonify({
+            "final": reply,
+            "session_id": session_id
+        })
+    
+    # ================= MEDICAL FLOW =================
+    if not profile.get("problem"):
+        profile["problem"] = user_message.lower()
+    session["profile"] = profile
+
     history.append({"role": "user", "content": user_message})
     full_history.append({"role": "user", "content": user_message})
 
-    reply = ""
-    assistant_content = ""
-    parsed = {}
+    # ================= BUILD CONTEXT HISTORY (FIX #1 & #5) =================
+    # Use last 12 messages instead of 4, with smart truncation
+    context_history = []
+    for m in history[-12:]:  # Increased from -4 to -12
+        content = m["content"]
+        # Don't truncate assistant responses that contain XML structure
+        if m["role"] == "assistant" and ("<response>" in content or "<followup_questions>" in content):
+            # Keep full XML responses
+            pass
+        elif len(content) > 600:
+            content = content[:600] + "..."
+        context_history.append({"role": m["role"], "content": content})
 
-    # =====================================================
-    # 1. EXIT FLOW
-    # =====================================================
-    if EXIT_PATTERN.search(user_message):
-        reply = random.choice(STATIC_THANKS + STATIC_FAREWELL)
-
-    # =====================================================
-    # 2. GREETING FLOW
-    # =====================================================
-    elif GREETING_PATTERN.search(user_message):
-        reply = random.choice(STATIC_GREETINGS)
-
-    # =====================================================
-    # 3. INQUIRY FLOW (🔥 YOUR FIX)
-    # =====================================================
-    elif INQUIRY_PATTERN.search(user_message):
-        reply = random.choice(STATIC_INQUIRY_RESPONSES)
-
-    # =====================================================
-    # 4. THANKS FLOW
-    # =====================================================
-    elif THANKS_PATTERN.search(user_message):
-        reply = random.choice(STATIC_THANKS)
-    elif FAREWELL_PATTERN.search(user_message):
-         reply = random.choice(STATIC_FAREWELL)
-
-    # =====================================================
-    # 5. MEDICAL FLOW
-    # =====================================================
-    elif is_medical:
-
-        if not profile.get("problem"):
-            profile["problem"] = user_message.lower()
-
-        session["profile"] = profile
-
-        context = [
-            {"role": m["role"], "content": m["content"][:300]}
-            for m in history[-10:]
-        ]
-
-        messages = [
-            {"role": "system", "content": DADI_SYSTEM_PROMPT},
-            {"role": "system", "content": f"""
-Age: {profile.get('age')}
-Sex: {profile.get('sex')}
-Problem: {profile.get('problem')}
+    # ================= BUILD PROMPT WITH MEDICAL MEMORY (FIX #2) =================
+    medical_memory_str = json.dumps(medical_memory, indent=2)
+    last_questions = session.get("last_questions", "None")
+    
+    messages = [
+        {"role": "system", "content": DADI_SYSTEM_PROMPT},
+        {"role": "system", "content": f"""
+Age: {profile.get('age', 'Unknown')}
+Sex: {profile.get('sex', 'Unknown')}
+Problem: {profile.get('problem', '')}
 Followup rounds: {followup_rounds}
+Current conversation mode: {conversation_state.get('mode', 'casual')}
+
+MEDICAL MEMORY (past info user already shared):
+{medical_memory_str}
+
+Last questions asked to user:
+{last_questions}
+
+IMPORTANT: Use the MEDICAL MEMORY above to remember what user already told you. Do NOT ask for the same information again.
 """}
-        ] + context
+    ] + context_history
 
-        try:
-            result = call_groq_api(messages)
-            raw = result["choices"][0]["message"]["content"]
+    try:
+        print("Step 2", messages)
+        result = call_groq_api(messages)
+        raw = result["choices"][0]["message"]["content"]
+    except Exception as e:
+        logger.error(f"AI API failed: {e}")
+        return jsonify({"final": "System busy hai beta, baad mein try karo", "session_id": session_id})
 
-            cleaned = clean_language(remove_thinking(raw).strip())
-            parsed = parse_xml_response(cleaned)
+    cleaned = remove_thinking(raw).strip()
+    cleaned = clean_language(cleaned)
 
-            assistant_content = cleaned
+    if "</response>" in cleaned:
+        cleaned = cleaned.split("</response>")[0] + "</response>"
 
-            if (
-                parsed.get("followup_questions")
-                and parsed["followup_questions"].strip()
-                and followup_rounds < 3
-            ):
-                reply = format_followup_questions(parsed["followup_questions"])
-                followup_rounds += 1
-            else:
-                reply = (
-                    (parsed.get("final") or "") +
-                    "\n" +
-                    (parsed.get("remedy") or "")
-                ).strip()
+    parsed = parse_xml_response(cleaned)
 
-            if not reply.strip():
-                reply = "Beta, mujhe thoda aur detail batao "
+    # ================= BUILD FULL RESPONSE =================
+    assistant_content = cleaned  # includes full XML
 
-        except Exception as e:
-            logger.error(e)
-            reply = "System busy hai beta, baad mein try karo"
-
-    # =====================================================
-    # 6. CASUAL AI FLOW
-    # =====================================================
+    MAX_FOLLOWUP = 3
+    if parsed.get("followup_questions") and followup_rounds < MAX_FOLLOWUP:
+        # Store the questions for future reference (FIX #4)
+        session["last_questions"] = parsed["followup_questions"]
+        reply = format_followup_questions(parsed["followup_questions"])
+        followup_rounds += 1
     else:
-        try:
-            messages = [
-                {"role": "system", "content": CASUAL_SYSTEM_PROMPT},
-                *history[-4:],
-                {"role": "user", "content": user_message}
-            ]
+        # Clear stored questions when moving to remedy
+        session["last_questions"] = ""
+        reply = (
+            (parsed.get("final") or "") + "\n"
+            + ("\nDiet:\n" + parsed.get("diet", "") if parsed.get("diet") else "")
+            + ("\nHabit:\n" + parsed.get("habit", "") if parsed.get("habit") else "")
+        ).strip()
 
-            result = call_groq_api(messages, temperature=0.7, max_tokens=80)
-            reply = result["choices"][0]["message"]["content"].strip()
+    if not reply or not reply.strip():
+        reply = "Thoda aur batao beta"
 
-        except Exception as e:
-            logger.error(e)
-            reply = random.choice(STATIC_GREETINGS)
-
-        assistant_content = reply
-        parsed = {"final": reply}
-
-    # ================= SAVE HISTORY =================
+    # ================= APPEND TO SESSION =================
+    # What user sees (clean response)
     history.append({"role": "assistant", "content": reply})
-    full_history.append({"role": "assistant", "content": assistant_content or reply})
+    # What we store in DB (full XML)
+    full_history.append({"role": "assistant", "content": assistant_content})
 
-    session["history"] = history[-10:]
+    session["history"] = history[-12:]  # Increased from -6 to -12
     session["full_history"] = full_history[-50:]
     session["followup_rounds"] = followup_rounds
 
-    # ================= SAVE DB =================
+    # ================= SAVE TO DB (FIX #3) =================
     payload = {
         "session_id": session_id,
         "age": profile.get("age"),
-        "sex": profile.get("sex"),
+        "sex": profile.get("sex") or "Unknown",
         "problem": profile.get("problem", ""),
         "followup_rounds": followup_rounds,
-        "history_json": json.dumps(full_history, ensure_ascii=False)
+        "status": "active",
+        "history_json": json.dumps(full_history, ensure_ascii=False),
+        "medical_memory": json.dumps(medical_memory, ensure_ascii=False)  # ← ADDED
     }
 
     try:
         requests.post("https://biglive.com/API/dadi/insert_chat.php", data=payload, timeout=5)
     except Exception as e:
-        logger.error(e)
+        logger.error(f"DB failed: {e}")
 
-    return jsonify({
-        "session_id": session_id,
-        "final": reply,
-        "diagnosis": parsed.get("diagnosis", ""),
-        "cause": parsed.get("cause", ""),
-        "remedy": parsed.get("remedy", ""),
-        "diet": parsed.get("diet", ""),
-        "habit": parsed.get("habit", ""),
-        "followup_questions": parsed.get("followup_questions", "")
-    })
+    parsed["final"] = reply
+    parsed["session_id"] = session_id
+    return jsonify(parsed)
+
 @app.route("/reset", methods=["POST"])
 def reset():
     session.clear()
@@ -653,51 +743,39 @@ def reset():
 
 @app.route("/get_history", methods=["GET"])
 def get_history():
-    session_id = request.args.get("session_id", "").strip()
+    """Return full chat history for frontend rendering with XML preserved"""
+    session_id = session.get("session_id")
 
-    if not session_id or session_id == "undefined":
-        return jsonify({
-            "history": [],
-            "session_id": None,
-            "error": "missing session_id"
-        }), 400
+    if not session_id:
+        import uuid
+        session["session_id"] = uuid.uuid4().hex[:16]
+        session_id = session["session_id"]
+        return jsonify({"history": [], "session_id": session_id})
 
     try:
-        res = requests.get(
-            f"https://biglive.com/API/dadi/get_chat.php?session_id={session_id}",
-            timeout=5
-        )
-
+        res = requests.get(f"https://biglive.com/API/dadi/get_chat.php?session_id={session_id}", timeout=5)
         if res.status_code == 200:
-            db_data = res.json()
+            data = res.json()
+            full_history = json.loads(data.get("history_json", "[]"))
 
-            full_history = json.loads(db_data.get("history_json", "[]"))
-
-            cleaned_history = [
-                {
+            cleaned_history = []
+            for msg in full_history:
+                cleaned_history.append({
                     "role": msg.get("role"),
                     "content": msg.get("content", "")
-                }
-                for msg in full_history
-            ]
-
-            return jsonify({
-                "history": cleaned_history,
-                "session_id": session_id
-            })
-
+                })
+            return jsonify({"history": cleaned_history, "session_id": session_id})
     except Exception as e:
-        logger.error(f"get_history failed: {e}")
+        logger.error(f"Failed to fetch full history from DB: {e}")
 
-    return jsonify({
-        "history": [],
-        "session_id": session_id
-    })
-@app.route('/status', methods=['GET'])
-def status():
-    """Return API status."""
-    print("Status check requested")
-    return jsonify({"status": "OKAY"}), 200
-# ============================================================w
+    history = session.get("history", [])
+    cleaned_history = []
+    for msg in history:
+        cleaned_history.append({
+            "role": msg.get("role"),
+            "content": msg.get("content", "")
+        })
+    return jsonify({"history": cleaned_history, "session_id": session_id})
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000, debug=True)
+    app.run(debug=True, port=5000)
