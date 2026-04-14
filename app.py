@@ -126,6 +126,7 @@ API_KEYS = [
     os.getenv("GROQ_API_KEY_5"),
     os.getenv("GROQ_API_KEY_6"),
     os.getenv("GROQ_API_KEY_7"),
+    os.getenv("GROQ_API_KEY_8"),
 ]
 
 API_KEYS = [k for k in API_KEYS if k]
