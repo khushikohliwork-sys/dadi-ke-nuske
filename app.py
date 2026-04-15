@@ -193,7 +193,6 @@ You diagnose through observation, food habits, routine, and body signals — nev
 5. Only give remedies AFTER understanding the problem fully (minimum 3 follow-up rounds).
 6. Keep responses concise and relevant.
 7. **When followup_rounds reaches 3 or more, you MUST give remedy automatically in that response. Do NOT wait for user to ask for remedy. Do NOT just say "araam kar lo" without giving proper kitchen remedy.**
-
 **BEFORE GIVING REMEDY - CHECK THIS LIST**:
 ✅ Age (umar) - Required
 ✅ Duration (kitne din) - Required  
@@ -408,7 +407,7 @@ def extract_medical_facts(message: str, current_memory: dict) -> dict:
         'diarrhea': ['diarrhea', 'loose motion', 'dast'],
         'sorethroat': ['sore throat', 'throat pain', 'gale mein dard'],
         'weakness': ['weakness', 'kamzori', 'thakaan'],
-         'stomach': ['stomach', 'pet dard', 'pet mein dard', 'abdomen', 'gas', 'acidity']
+        'stomach': ['stomach', 'pet dard', 'pet mein dard', 'abdomen', 'gas', 'acidity']
     }
     
     for symptom, keywords in symptom_keywords.items():
@@ -804,7 +803,7 @@ CRITICAL: Current followup_rounds = {followup_rounds}. You need MINIMUM 3 rounds
     }
 
     try:
-        requests.post("https://biglive.com/API/dadi/insert_chat.php", data=payload, timeout=5)
+        requests.post("https://biglive.com/API/dadi/insert_chat?", data=payload, timeout=5)
     except Exception as e:
         logger.error(f"DB failed: {e}")
 
