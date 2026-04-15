@@ -163,7 +163,6 @@ classifier = MedicalClassifier(
 )
 
 # ============================================================
-# DADI PROMPT (UNCHANGED)
 # ============================================================
 DADI_SYSTEM_PROMPT = """
 You are Dadi — an 89-year-old Indian grandmother with deep, practical knowledge of Ayurveda and ghar ke nuske.
@@ -187,12 +186,28 @@ MEDICAL MODE
 You diagnose through observation, food habits, routine, and body signals — never modern medicine.
 
 **CRITICAL RULES**:
-1. NEVER give medical advice — you're Dadi, not a doctor.
+1. NEVER give medical advice — you're Dadi, not a doctor. NEVER say "doctor ko dikha lo" unless user mentions emergency (blood, accident, unconscious).
 2. Be conversational, natural — talk like a real grandmother.
 3. Use simple Hinglish — mix Hindi and English naturally.
 4. Be warm, caring, sometimes slightly firm.
-5. Only give remedies AFTER understanding the problem fully.
+5. Only give remedies AFTER understanding the problem fully (minimum 3 follow-up rounds).
 6. Keep responses concise and relevant.
+7. **When followup_rounds reaches 3 or more, you MUST give remedy automatically in that response. Do NOT wait for user to ask for remedy. Do NOT just say "araam kar lo" without giving proper kitchen remedy.**
+
+**BEFORE GIVING REMEDY - CHECK THIS LIST**:
+✅ Age (umar) - Required
+✅ Duration (kitne din) - Required  
+✅ Main symptoms (at least 2) - Required
+✅ Severity (tez/halka) - Required
+✅ Temperature (if fever) - Required for fever cases
+✅ Food habits (kya khaya) - Recommended
+✅ Sleep (neend) - Recommended
+
+**DECISION RULES**:
+- If ALL Required items present AND followup_rounds >= 3 → Give remedy in <remedy> tag
+- If ANY Required item missing OR followup_rounds < 3 → Put questions in <followup_questions> tag, leave <remedy> empty
+- NEVER put remedy and followup_questions together in same response
+- NEVER say "doctor ko dikha lo" for normal symptoms like fever, cold, cough
 
 **MEDICAL BEHAVIOR**:
 • Ask 2–3 natural follow-up questions (NOT robotic, NOT repetitive).
@@ -200,18 +215,19 @@ You diagnose through observation, food habits, routine, and body signals — nev
 • Questions should feel like a real conversation, not instructions.
 • Identify root cause before giving any remedy.
 • Link issue to digestion / heat / cold / imbalance.
-• Prefer kitchen-based remedies first.
+• Prefer kitchen-based remedies first (tulsi, adrak, haldi, shahad, etc.).
 • Keep tone simple, experienced, slightly firm (Hinglish).
 • Respond strictly in <response> XML format.
 • Continuously check for critical missing info each round.
-• Track follow-up rounds; after 2–3 rounds, give remedy, diet, habit, final advice.
+• Track follow-up rounds; after MINIMUM 3 rounds, give remedy, diet, habit, final advice.
 • Once remedy is given, do NOT ask any more follow-up questions.
 • Avoid repeating same phrasing every time.
 • Vary language naturally like a human.
 
 **MEDICAL RESPONSE GUIDELINES**:
-• If information is incomplete: Ask specific questions about age, symptoms, food, routine.
-• If you have enough info: Give 1–2 simple kitchen remedies with timing and quantity.
+• If information is incomplete OR followup_rounds < 3: Ask specific questions about age, symptoms, food, routine.
+• If you have enough info AND followup_rounds >= 3: Give 1–2 simple kitchen remedies with timing and quantity.
+• If user says "remedy" but rounds < 3, say: "Beta, remedy dene se pehle thoda aur puchna zaroori hai. [ask missing questions]"
 • Always end with warmth and care.
 
 **INPUT UNDERSTANDING** (Medical Mode only):
@@ -223,7 +239,7 @@ Extract:
 • Major food or lifestyle clues relevant to symptoms
 
 Ask **only critical missing info 2–3 at a time in bullet points.**
-After 2–3 follow-up rounds, proceed to remedy, diet, habit, final advice.  
+After MINIMUM 3 follow-up rounds, proceed to remedy, diet, habit, final advice.  
 Minor optional info (urine color, mild headache, dryness) does NOT block remedy.
 
 **CRITICAL MISSING INFO BY SYMPTOM** (Medical Mode only):
@@ -243,7 +259,8 @@ Minor optional info (urine color, mild headache, dryness) does NOT block remedy.
 • Food linkage:
 • Lifestyle linkage:
 • Missing information:
-• Follow-up rounds done: [number] → proceed to remedy if ≥2-3
+• Required items checklist (age/duration/symptoms/severity/temperature):
+• Follow-up rounds done: [number] → proceed to remedy ONLY if >=3 AND all required items present
 </thinking>
 
 <diagnosis></diagnosis>
@@ -252,8 +269,8 @@ Minor optional info (urine color, mild headache, dryness) does NOT block remedy.
 <diet></diet>
 <habit></habit>
 <followup_questions>
-<!-- Fill only if followup_rounds < 3 AND critical info is missing -->
-<!-- Leave empty if followup_rounds ≥ 3 OR all critical info collected -->
+<!-- Fill ONLY IF followup_rounds < 3 OR required items missing -->
+<!-- Leave EMPTY if followup_rounds >= 3 AND all required items collected -->
 </followup_questions>
 <final></final>
 </response>
@@ -311,16 +328,21 @@ def extract_user_profile(message: str) -> dict:
     msg = message.lower()
     msg = msg.replace("ols", "old")
 
-    # --- AGE ---
-    age_match = re.search(
-        r'\b(\d{1,3})\s*(years?|yrs?|year|old|age|saal|saal ka|saal ki)\b',
-        msg
-    )
-
-    if age_match:
-        age = int(age_match.group(1))
-        if 1 <= age <= 120:
-            profile['age'] = age
+    # --- AGE (Improved pattern) ---
+    age_patterns = [
+        r'\b(\d{1,3})\s*(years?|yrs?|year|old|age|saal|saal\s*ka|saal\s*ki)\b',
+        r'\b(\d{1,3})\s*(yo|y/o)\b',  # "23 yo"
+        r'(\d{1,3})\s*saal',  # "23 saal"
+        r'(\d{1,3})\s*years?\s*old',  # "23 years old"
+    ]
+    
+    for pattern in age_patterns:
+        age_match = re.search(pattern, msg)
+        if age_match:
+            age = int(age_match.group(1))
+            if 1 <= age <= 120:
+                profile['age'] = age
+                break
 
     # --- SEX ---
     sex_match = re.search(r'\b(male|female|boy|girl|m|f)\b', msg)
@@ -329,7 +351,6 @@ def extract_user_profile(message: str) -> dict:
         profile['sex'] = 'M' if val in ['male','m','boy'] else 'F'
 
     return profile
-
 # ============================================================
 # MEDICAL FACTS EXTRACTION (NEW)
 # ============================================================
@@ -341,10 +362,9 @@ def extract_medical_facts(message: str, current_memory: dict) -> dict:
     
     # Extract temperature
     temp_patterns = [
-        r'(\d{2,3})\s*(?:°|degree|degrees?)\s*(?:f|fahrenheit)?',
-        r'fever\s*(\d{2,3})',
-        r'temp(?:erature)?\s*(?:is|was|hai|tha)?\s*(\d{2,3})',
-        r'(\d{2,3})\s*(?:°|degree|degrees?)'
+        r'(\d{2,3}(?:\.\d+)?)\s*(?:°|degree|degrees?)\s*(?:f|fahrenheit)?',  # Added decimal support
+        r'fever\s*(\d{2,3}(?:\.\d+)?)',
+        # ... rest
     ]
     for pattern in temp_patterns:
         temp_match = re.search(pattern, msg)
@@ -387,7 +407,8 @@ def extract_medical_facts(message: str, current_memory: dict) -> dict:
         'nausea': ['nausea', 'nausious', 'matli', 'ultas', 'vomiting', 'ulti'],
         'diarrhea': ['diarrhea', 'loose motion', 'dast'],
         'sorethroat': ['sore throat', 'throat pain', 'gale mein dard'],
-        'weakness': ['weakness', 'kamzori', 'thakaan']
+        'weakness': ['weakness', 'kamzori', 'thakaan'],
+         'stomach': ['stomach', 'pet dard', 'pet mein dard', 'abdomen', 'gas', 'acidity']
     }
     
     for symptom, keywords in symptom_keywords.items():
@@ -486,40 +507,46 @@ def chat():
     session_id = session.get("session_id")
     
     # ================= RESTORE SESSION FROM DB =================
-    if not history:
-        try:
-            res = requests.get(
-                f"https://biglive.com/API/dadi/get_chat.php?session_id={session_id}",
-                timeout=5
-            )
-            if res.status_code == 200:
-                db_data = res.json()
-                session["profile"] = {
-                    "age": db_data.get("age"),
-                    "sex": db_data.get("sex"),
-                    "problem": db_data.get("problem")
-                }
-                restored = json.loads(db_data.get("history_json", "[]"))
-                session["full_history"] = restored
-                session["history"] = restored[-12:]  # Increased from -6 to -12
-                session["followup_rounds"] = db_data.get("followup_rounds", 0)
-                session["last_advice_given"] = True
+    try:
+        res = requests.get(
+            f"https://biglive.com/API/dadi/get_chat.php?session_id={session_id}",
+            timeout=5
+        )
+        if res.status_code == 200:
+            db_data = res.json()
+            db_history = json.loads(db_data.get("history_json", "[]"))
+            
+            # Always use DB if it has more data
+            if len(db_history) > len(history):
+                logger.info(f"🔄 DB has {len(db_history)} msgs, session has {len(history)} msgs - Restoring")
                 
-                # Restore medical memory
+                full_history = db_history
+                history = db_history[-12:]
+                session["full_history"] = full_history
+                session["history"] = history
+                session["followup_rounds"] = db_data.get("followup_rounds", 0)
+                followup_rounds = session["followup_rounds"]
+                
+                if db_data.get("age"):
+                    profile["age"] = db_data.get("age")
+                if db_data.get("sex"):
+                    profile["sex"] = db_data.get("sex")
+                if db_data.get("problem"):
+                    profile["problem"] = db_data.get("problem")
+                session["profile"] = profile
+                
                 try:
                     restored_memory = json.loads(db_data.get("medical_memory", "{}"))
-                    session["medical_memory"] = restored_memory
-                    medical_memory = restored_memory
+                    if restored_memory:
+                        medical_memory.update(restored_memory)
+                        session["medical_memory"] = medical_memory
                 except:
-                    session["medical_memory"] = {}
-                    medical_memory = {}
+                    pass
+            else:
+                logger.info(f"📌 Session history up-to-date: {len(history)} msgs")
                 
-                profile = session.get("profile", {})
-                history = session.get("history", [])
-                full_history = session.get("full_history", [])
-                followup_rounds = session.get("followup_rounds", 0)
-        except Exception as e:
-            logger.error(f"Restore failed: {e}")
+    except Exception as e:
+        logger.error(f"Restore failed: {e}")
 
     # ================= PROFILE EXTRACTION =================
     new_data = extract_user_profile(user_message)
@@ -528,7 +555,7 @@ def chat():
             profile[key] = new_data[key]
     session["profile"] = profile
 
-    # ================= MEDICAL MEMORY EXTRACTION (FIX #2) =================
+    # ================= MEDICAL MEMORY EXTRACTION =================
     extracted_facts = extract_medical_facts(user_message, medical_memory)
     for key, value in extracted_facts.items():
         if key == 'symptoms':
@@ -537,24 +564,24 @@ def chat():
             medical_memory[key] = value
     session["medical_memory"] = medical_memory
 
-    # ================= HANDLE QUERIES ABOUT PAST INFO (FIX #7) =================
-    # Age query
-    if re.search(r'umar kya hai|meri age kya hai|kitne saal', user_message, re.IGNORECASE):
+    # ================= HANDLE QUERIES ABOUT PAST INFO (ONLY WHEN ASKING) =================
+    # Age query - ONLY when user ASKS for their age
+    if re.search(r'(meri|mujhe|apni)\s*(umar|age)\s*kya\s*(hai|hain|batao)|(kitne\s*saal\s*ka\s*hu|kitne\s*saal\s*ki\s*hu)', user_message, re.IGNORECASE):
         if profile.get("age"):
             return jsonify({"final": f"Beta, tumhari umar {profile['age']} saal hai", "session_id": session_id})
         else:
             return jsonify({"final": "Beta, tumne abhi tak apni umar batayi nahi", "session_id": session_id})
-    
-    # Temperature query
-    if re.search(r'(temperature|temp|fever) (kya tha|kya hai|kitna tha|kitna hai)', user_message, re.IGNORECASE):
+
+    # Temperature query - ONLY when user ASKS about temperature
+    if re.search(r'(temperature|temp|fever)\s*(kya\s*tha|kya\s*hai|kitna\s*tha|kitna\s*hai|batao)', user_message, re.IGNORECASE):
         temp = medical_memory.get("temperature")
         if temp:
             return jsonify({"final": f"Beta, tumhara temperature {temp}°F tha", "session_id": session_id})
         else:
             return jsonify({"final": "Beta, tumne abhi tak temperature bataya nahi. Kitna fever tha?", "session_id": session_id})
-    
-    # Duration query
-    if re.search(r'(kitne din|duration|kab se|days? se)', user_message, re.IGNORECASE):
+
+    # Duration query - ONLY when user ASKS about duration
+    if re.search(r'(kitne\s*din\s*se|duration\s*kya\s*hai|kab\s*se\s*problem|kitne\s*din\s*hue|how\s*long)', user_message, re.IGNORECASE):
         duration = medical_memory.get("duration")
         if duration:
             return jsonify({"final": f"Beta, tumne bataya tha {duration} se problem hai", "session_id": session_id})
@@ -573,7 +600,7 @@ def chat():
     if (followup_rounds > 0 or not last_advice_given) and remedy_keywords.search(user_message):
         is_medical = True
 
-    # ================= CONVERSATION STATE (FIX #6) =================
+    # ================= CONVERSATION STATE =================
     if is_medical:
         conversation_state["mode"] = "medical"
         conversation_state["last_topic"] = "health"
@@ -611,10 +638,11 @@ def chat():
         if not reply or not reply.strip():
             reply = "Thoda aur batao beta"
 
+        # ✅ FIX 1: Use reply, not assistant_content (which doesn't exist here)
         history.append({"role": "assistant", "content": reply})
         full_history.append({"role": "assistant", "content": reply})
 
-        session["history"] = history[-12:]  # Increased from -6 to -12
+        session["history"] = history[-12:]
         session["full_history"] = full_history[-50:]
 
         return jsonify({
@@ -630,20 +658,38 @@ def chat():
     history.append({"role": "user", "content": user_message})
     full_history.append({"role": "user", "content": user_message})
 
-    # ================= BUILD CONTEXT HISTORY (FIX #1 & #5) =================
-    # Use last 12 messages instead of 4, with smart truncation
+    # ================= BUILD CONTEXT HISTORY =================
     context_history = []
-    for m in history[-12:]:  # Increased from -4 to -12
+    for m in history[-12:]:
         content = m["content"]
-        # Don't truncate assistant responses that contain XML structure
-        if m["role"] == "assistant" and ("<response>" in content or "<followup_questions>" in content):
-            # Keep full XML responses
-            pass
-        elif len(content) > 600:
-            content = content[:600] + "..."
+        
+        # For assistant messages, extract only the meaningful parts
+        if m["role"] == "assistant" and "<response>" in content:
+            import re
+            # Try to extract followup_questions
+            followup_match = re.search(r'<followup_questions>(.*?)</followup_questions>', content, re.DOTALL)
+            if followup_match and followup_match.group(1).strip():
+                content = followup_match.group(1).strip()
+            else:
+                # Try to extract final
+                final_match = re.search(r'<final>(.*?)</final>', content, re.DOTALL)
+                if final_match and final_match.group(1).strip():
+                    content = final_match.group(1).strip()
+                else:
+                    # Extract remedy if no questions
+                    remedy_match = re.search(r'<remedy>(.*?)</remedy>', content, re.DOTALL)
+                    if remedy_match and remedy_match.group(1).strip():
+                        content = f"Remedy given: {remedy_match.group(1).strip()[:200]}"
+                    else:
+                        content = "Dadi asked some questions"
+        
+        # Truncate only user messages if too long
+        elif m["role"] == "user" and len(content) > 500:
+            content = content[:500] + "..."
+        
         context_history.append({"role": m["role"], "content": content})
 
-    # ================= BUILD PROMPT WITH MEDICAL MEMORY (FIX #2) =================
+    # ================= BUILD PROMPT WITH MEDICAL MEMORY =================
     medical_memory_str = json.dumps(medical_memory, indent=2)
     last_questions = session.get("last_questions", "None")
     
@@ -663,6 +709,7 @@ Last questions asked to user:
 {last_questions}
 
 IMPORTANT: Use the MEDICAL MEMORY above to remember what user already told you. Do NOT ask for the same information again.
+CRITICAL: Current followup_rounds = {followup_rounds}. You need MINIMUM 3 rounds before giving remedy.
 """}
     ] + context_history
 
@@ -682,38 +729,69 @@ IMPORTANT: Use the MEDICAL MEMORY above to remember what user already told you. 
 
     parsed = parse_xml_response(cleaned)
 
-    # ================= BUILD FULL RESPONSE =================
-    assistant_content = cleaned  # includes full XML
-
-    MAX_FOLLOWUP = 3
-    if parsed.get("followup_questions") and followup_rounds < MAX_FOLLOWUP:
-        # Store the questions for future reference (FIX #4)
+    # ================= BUILD FULL RESPONSE WITH ENFORCED RULES =================
+    assistant_content = cleaned
+    
+    MAX_FOLLOWUP = 3  # Minimum rounds before remedy
+    
+    # CHECK: If user is demanding remedy but rounds incomplete
+    if "remedy" in user_message.lower() and followup_rounds < MAX_FOLLOWUP:
+        # Force follow-up questions, ignore AI's remedy
+        missing_info = []
+        if not medical_memory.get("temperature") and "fever" in str(medical_memory.get("symptoms", [])):
+            missing_info.append("temperature kitna hai")
+        if not medical_memory.get("duration"):
+            missing_info.append("kitne din se problem hai")
+        if not profile.get("age"):
+            missing_info.append("tumhari umar kya hai")
+        
+        if missing_info:
+            reply = f"Beta, remedy dene se pehle yeh batao: {', '.join(missing_info)}"
+        else:
+            reply = "Beta, thoda aur batao - khana kya khaya? Neend achi aayi? Tabhi sahi nuska bataunga."
+        
+        # Don't increment followup_rounds here, let next round handle
+        parsed["followup_questions"] = reply
+        parsed["remedy"] = ""
+    
+    # Normal flow: check followup questions vs remedy
+    elif parsed.get("followup_questions") and followup_rounds < MAX_FOLLOWUP:
+        # Store the questions for future reference
         session["last_questions"] = parsed["followup_questions"]
         reply = format_followup_questions(parsed["followup_questions"])
         followup_rounds += 1
     else:
         # Clear stored questions when moving to remedy
         session["last_questions"] = ""
-        reply = (
-            (parsed.get("final") or "") + "\n"
-            + ("\nDiet:\n" + parsed.get("diet", "") if parsed.get("diet") else "")
-            + ("\nHabit:\n" + parsed.get("habit", "") if parsed.get("habit") else "")
-        ).strip()
+        
+        # Build remedy response
+        remedy_parts = []
+        if parsed.get("remedy"):
+            remedy_parts.append(f"Ghar ka Nuska:\n{parsed['remedy']}")
+        if parsed.get("diet"):
+            remedy_parts.append(f"Khana-Peena:\n{parsed['diet']}")
+        if parsed.get("habit"):
+            remedy_parts.append(f"Aadat Badlo:\n{parsed['habit']}")
+        if parsed.get("final"):
+            remedy_parts.append(parsed['final'])
+        
+        reply = "\n\n".join(remedy_parts) if remedy_parts else "Thoda aur batao beta"
+        
+        # Mark that advice has been given
+        session["last_advice_given"] = True
 
     if not reply or not reply.strip():
         reply = "Thoda aur batao beta"
 
     # ================= APPEND TO SESSION =================
-    # What user sees (clean response)
-    history.append({"role": "assistant", "content": reply})
-    # What we store in DB (full XML)
+    history.append({"role": "assistant", "content": assistant_content})  # Store XML for context
     full_history.append({"role": "assistant", "content": assistant_content})
 
-    session["history"] = history[-12:]  # Increased from -6 to -12
+    session["history"] = history[-12:]
     session["full_history"] = full_history[-50:]
     session["followup_rounds"] = followup_rounds
 
-    # ================= SAVE TO DB (FIX #3) =================
+    # ================= SAVE TO DB =================
     payload = {
         "session_id": session_id,
         "age": profile.get("age"),
@@ -722,7 +800,7 @@ IMPORTANT: Use the MEDICAL MEMORY above to remember what user already told you. 
         "followup_rounds": followup_rounds,
         "status": "active",
         "history_json": json.dumps(full_history, ensure_ascii=False),
-        "medical_memory": json.dumps(medical_memory, ensure_ascii=False)  # ← ADDED
+        "medical_memory": json.dumps(medical_memory, ensure_ascii=False)
     }
 
     try:
@@ -730,6 +808,7 @@ IMPORTANT: Use the MEDICAL MEMORY above to remember what user already told you. 
     except Exception as e:
         logger.error(f"DB failed: {e}")
 
+    # ✅ FIX 2: Proper indentation
     parsed["final"] = reply
     parsed["session_id"] = session_id
     return jsonify(parsed)
@@ -779,4 +858,4 @@ def get_history():
     return jsonify({"history": cleaned_history, "session_id": session_id})
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+     app.run(host="0.0.0.0", port=5000, debug=True)
