@@ -35,7 +35,7 @@ app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "fallback_secret")
 CORS(app,
      supports_credentials=True,
-     origins=["https://www.biglive.com"])
+     origins=["http://biglive.in"])
 # ============================================================
 # GROQ CONFIG
 # ============================================================
