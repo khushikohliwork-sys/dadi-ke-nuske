@@ -5,3 +5,4 @@ python-dotenv==1.2.1
 requests==2.32.5
 beautifulsoup4==4.12.2
 gunicorn==21.2.0
+Flask-Session==0.8.0  # Add this line
