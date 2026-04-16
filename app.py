@@ -8,7 +8,6 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 from flask import Flask, request, jsonify, render_template, session
-from flask_session import Session
 from flask_cors import CORS
 from dotenv import load_dotenv
 import requests
@@ -43,7 +42,7 @@ app.config.update(
 Session(app)
 CORS(app,
      supports_credentials=True,
-     origins=["http://biglive.in"])
+     origins=["http://www.biglive.in"])
 # ============================================================
 # GROQ CONFIG
 # ============================================================
@@ -507,22 +506,16 @@ def chat():
 
     # ================= SESSION ID =================
     incoming_session = data.get("session_id")
-
-    # CRITICAL FIX: Always ensure we have a valid session_id
-    if incoming_session and incoming_session != "undefined":
+    if incoming_session:
         session["session_id"] = incoming_session
-    elif "session_id" not in session or session.get("session_id") == "undefined":
+    elif "session_id" not in session:
         session["session_id"] = uuid.uuid4().hex[:16]
-    
     session_id = session.get("session_id")
-    
-    # Debug log
-    logger.info(f"📌 Session ID: {session_id} (incoming: {incoming_session})")
     
     # ================= RESTORE SESSION FROM DB =================
     try:
         res = requests.get(
-            f"https://biglive.com/API/dadi/get_chat.php?session_id={session_id}",
+            f"http://dadi.com/get_chat.php?session_id={session_id}",
             timeout=5
         )
         if res.status_code == 200:
@@ -651,6 +644,7 @@ def chat():
         if not reply or not reply.strip():
             reply = "Thoda aur batao beta"
 
+        # ✅ FIX 1: Use reply, not assistant_content (which doesn't exist here)
         history.append({"role": "assistant", "content": reply})
         full_history.append({"role": "assistant", "content": reply})
 
@@ -671,16 +665,31 @@ def chat():
     full_history.append({"role": "user", "content": user_message})
 
     # ================= BUILD CONTEXT HISTORY =================
-    # CRITICAL FIX: Keep full assistant responses, don't strip them
     context_history = []
     for m in history[-12:]:
         content = m["content"]
         
-        # Keep full context for assistant messages - don't strip XML
+        # For assistant messages, extract only the meaningful parts
         if m["role"] == "assistant" and "<response>" in content:
-            # Just truncate if too long, but preserve all XML tags
-            if len(content) > 800:
-                content = content[:800] + "..."
+            import re
+            # Try to extract followup_questions
+            followup_match = re.search(r'<followup_questions>(.*?)</followup_questions>', content, re.DOTALL)
+            if followup_match and followup_match.group(1).strip():
+                content = followup_match.group(1).strip()
+            else:
+                # Try to extract final
+                final_match = re.search(r'<final>(.*?)</final>', content, re.DOTALL)
+                if final_match and final_match.group(1).strip():
+                    content = final_match.group(1).strip()
+                else:
+                    # Extract remedy if no questions
+                    remedy_match = re.search(r'<remedy>(.*?)</remedy>', content, re.DOTALL)
+                    if remedy_match and remedy_match.group(1).strip():
+                        content = f"Remedy given: {remedy_match.group(1).strip()[:200]}"
+                    else:
+                        content = "Dadi asked some questions"
+        
+        # Truncate only user messages if too long
         elif m["role"] == "user" and len(content) > 500:
             content = content[:500] + "..."
         
@@ -799,21 +808,13 @@ CRITICAL: Current followup_rounds = {followup_rounds}. You need MINIMUM 3 rounds
         "history_json": json.dumps(full_history, ensure_ascii=False),
         "medical_memory": json.dumps(medical_memory, ensure_ascii=False)
     }
-    logger.info("=" * 60)
-    logger.info("📤 SENDING TO DATABASE:")
-    logger.info("=" * 60)
-    logger.info(f"📌 Session ID: {session_id}")
-    logger.info(f"👤 Age: {profile.get('age', 'Not provided')}")
-    logger.info(f"⚥ Sex: {profile.get('sex', 'Not provided')}")
-    logger.info(f"🏥 Problem: {profile.get('problem', 'Not provided')}")
-    logger.info(f"🔄 Followup Rounds: {followup_rounds}")
-    logger.info(f"📝 History Messages Count: {len(full_history)}")
 
     try:
-        requests.post("https://biglive.com/API/dadi/insert_chat?", data=payload, timeout=5)
+        requests.post("http://dadi.com/insert_chat.php", data=payload, timeout=5)
     except Exception as e:
         logger.error(f"DB failed: {e}")
 
+    # ✅ FIX 2: Proper indentation
     parsed["final"] = reply
     parsed["session_id"] = session_id
     return jsonify(parsed)
@@ -823,7 +824,6 @@ def reset():
     session.clear()
     new_session_id = str(uuid.uuid4().hex[:16])
     session["session_id"] = new_session_id
-    session.permanent = True  # ADD THIS LINE
     logger.info(f"✅ Session reset. New session_id: {new_session_id}")
     return jsonify({"status": "reset", "new_session_id": new_session_id})
 
@@ -839,7 +839,7 @@ def get_history():
         return jsonify({"history": [], "session_id": session_id})
 
     try:
-        res = requests.get(f"https://biglive.com/API/dadi/get_chat.php?session_id={session_id}", timeout=5)
+        res = requests.get(f"http://dadi.com/get_chat.php?session_id={session_id}", timeout=5)
         if res.status_code == 200:
             data = res.json()
             full_history = json.loads(data.get("history_json", "[]"))
