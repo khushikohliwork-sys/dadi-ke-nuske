@@ -799,6 +799,15 @@ CRITICAL: Current followup_rounds = {followup_rounds}. You need MINIMUM 3 rounds
         "history_json": json.dumps(full_history, ensure_ascii=False),
         "medical_memory": json.dumps(medical_memory, ensure_ascii=False)
     }
+    logger.info("=" * 60)
+    logger.info("📤 SENDING TO DATABASE:")
+    logger.info("=" * 60)
+    logger.info(f"📌 Session ID: {session_id}")
+    logger.info(f"👤 Age: {profile.get('age', 'Not provided')}")
+    logger.info(f"⚥ Sex: {profile.get('sex', 'Not provided')}")
+    logger.info(f"🏥 Problem: {profile.get('problem', 'Not provided')}")
+    logger.info(f"🔄 Followup Rounds: {followup_rounds}")
+    logger.info(f"📝 History Messages Count: {len(full_history)}")
 
     try:
         requests.post("https://biglive.com/API/dadi/insert_chat?", data=payload, timeout=5)
