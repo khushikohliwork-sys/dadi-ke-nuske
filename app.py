@@ -637,7 +637,6 @@ def chat():
         if not reply or not reply.strip():
             reply = "Thoda aur batao beta"
 
-        # ✅ FIX 1: Use reply, not assistant_content (which doesn't exist here)
         history.append({"role": "assistant", "content": reply})
         full_history.append({"role": "assistant", "content": reply})
 
@@ -658,31 +657,16 @@ def chat():
     full_history.append({"role": "user", "content": user_message})
 
     # ================= BUILD CONTEXT HISTORY =================
+    # CRITICAL FIX: Keep full assistant responses, don't strip them
     context_history = []
     for m in history[-12:]:
         content = m["content"]
         
-        # For assistant messages, extract only the meaningful parts
+        # Keep full context for assistant messages - don't strip XML
         if m["role"] == "assistant" and "<response>" in content:
-            import re
-            # Try to extract followup_questions
-            followup_match = re.search(r'<followup_questions>(.*?)</followup_questions>', content, re.DOTALL)
-            if followup_match and followup_match.group(1).strip():
-                content = followup_match.group(1).strip()
-            else:
-                # Try to extract final
-                final_match = re.search(r'<final>(.*?)</final>', content, re.DOTALL)
-                if final_match and final_match.group(1).strip():
-                    content = final_match.group(1).strip()
-                else:
-                    # Extract remedy if no questions
-                    remedy_match = re.search(r'<remedy>(.*?)</remedy>', content, re.DOTALL)
-                    if remedy_match and remedy_match.group(1).strip():
-                        content = f"Remedy given: {remedy_match.group(1).strip()[:200]}"
-                    else:
-                        content = "Dadi asked some questions"
-        
-        # Truncate only user messages if too long
+            # Just truncate if too long, but preserve all XML tags
+            if len(content) > 800:
+                content = content[:800] + "..."
         elif m["role"] == "user" and len(content) > 500:
             content = content[:500] + "..."
         
@@ -807,7 +791,6 @@ CRITICAL: Current followup_rounds = {followup_rounds}. You need MINIMUM 3 rounds
     except Exception as e:
         logger.error(f"DB failed: {e}")
 
-    # ✅ FIX 2: Proper indentation
     parsed["final"] = reply
     parsed["session_id"] = session_id
     return jsonify(parsed)
