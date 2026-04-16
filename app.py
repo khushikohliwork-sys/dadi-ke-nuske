@@ -8,6 +8,7 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 from flask import Flask, request, jsonify, render_template, session
+from flask_session import Session
 from flask_cors import CORS
 from dotenv import load_dotenv
 import requests
@@ -33,6 +34,13 @@ load_dotenv()
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "fallback_secret")
+app.config.update(
+    SESSION_TYPE='filesystem',
+    SESSION_FILE_DIR='/tmp/flask_session',
+    SESSION_COOKIE_SECURE=True,
+    SESSION_COOKIE_SAMESITE='None',
+)
+Session(app)
 CORS(app,
      supports_credentials=True,
      origins=["http://biglive.in"])
