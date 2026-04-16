@@ -507,11 +507,17 @@ def chat():
 
     # ================= SESSION ID =================
     incoming_session = data.get("session_id")
-    if incoming_session:
+
+    # CRITICAL FIX: Always ensure we have a valid session_id
+    if incoming_session and incoming_session != "undefined":
         session["session_id"] = incoming_session
-    elif "session_id" not in session:
+    elif "session_id" not in session or session.get("session_id") == "undefined":
         session["session_id"] = uuid.uuid4().hex[:16]
+    
     session_id = session.get("session_id")
+    
+    # Debug log
+    logger.info(f"📌 Session ID: {session_id} (incoming: {incoming_session})")
     
     # ================= RESTORE SESSION FROM DB =================
     try:
@@ -808,6 +814,7 @@ def reset():
     session.clear()
     new_session_id = str(uuid.uuid4().hex[:16])
     session["session_id"] = new_session_id
+    session.permanent = True  # ADD THIS LINE
     logger.info(f"✅ Session reset. New session_id: {new_session_id}")
     return jsonify({"status": "reset", "new_session_id": new_session_id})
 
