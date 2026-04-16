@@ -37,7 +37,7 @@ app.secret_key = os.getenv("SECRET_KEY", "fallback_secret")
 app.config.update(
     SESSION_TYPE='filesystem',
     SESSION_FILE_DIR='/tmp/flask_session',
-    SESSION_COOKIE_SECURE=True,
+    SESSION_COOKIE_SECURE=False,
     SESSION_COOKIE_SAMESITE='None',
 )
 FlaskSession(app)
