@@ -8,7 +8,7 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 from flask import Flask, request, jsonify, render_template, session
-from flask_session import Session
+from flask_session import Session as FlaskSession
 from flask_cors import CORS
 from dotenv import load_dotenv
 import requests
@@ -40,7 +40,7 @@ app.config.update(
     SESSION_COOKIE_SECURE=True,
     SESSION_COOKIE_SAMESITE='None',
 )
-Session(app)
+FlaskSession(app)
 CORS(app,
      supports_credentials=True,
      origins=["http://biglive.in"])
