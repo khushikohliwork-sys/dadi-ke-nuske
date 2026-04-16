@@ -42,7 +42,7 @@ app.config.update(
 Session(app)
 CORS(app,
      supports_credentials=True,
-     origins=["http://www.biglive.in"])
+     origins=["http://biglive.in"])
 # ============================================================
 # GROQ CONFIG
 # ============================================================
