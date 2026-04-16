@@ -8,6 +8,7 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 from flask import Flask, request, jsonify, render_template, session
+from flask_session import Session
 from flask_cors import CORS
 from dotenv import load_dotenv
 import requests
